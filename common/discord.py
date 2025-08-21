@@ -51,8 +51,11 @@ async def on_message(message):
         return
     
     if message.content and message.content.startswith('!dex'):
-        await speak_message(message)
+        await speak_message_hq(message)
 
+    # Process other commands
+    await bot.process_commands(message)
+    
 # High quality options for TTS
 FFMPEG_OPTIONS = {
     'before_options': '-nostdin',
