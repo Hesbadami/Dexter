@@ -1,5 +1,5 @@
 import tempfile
-import os 
+import os
 import logging
 import asyncio
 
@@ -11,7 +11,6 @@ from discord.ext import commands
 import wavelink
 
 logger = logging.getLogger()
-
 
 class TTSBot(commands.Bot):
     def __init__(self):
@@ -35,7 +34,6 @@ class TTSBot(commands.Bot):
             logger.error(f"Failed to connect to Lavalink: {e}")
             logger.error("Make sure Lavalink server is running on localhost:2333")
 
-
 bot = TTSBot()
 
 @bot.event
@@ -44,23 +42,17 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    
-    logger.info(f"Received message")
+    logger.info(f"Received message from {message.author}: {message.content[:50]}...")
 
     if message.author == bot.user:
         return
-    
+
     if message.content and message.content.startswith('!dex'):
         await speak_message_hq(message)
+        return  # Don't process as command
 
     # Process other commands
     await bot.process_commands(message)
-    
-# High quality options for TTS
-FFMPEG_OPTIONS = {
-    'before_options': '-nostdin',
-    'options': '-vn -ar 48000 -ac 2 -b:a 320k -af "volume=0.8,highpass=f=200,lowpass=f=8000"'
-}
 
 async def speak_message_hq(message):
     """High-quality TTS using Wavelink/Lavalink"""
@@ -103,7 +95,12 @@ async def speak_message_hq(message):
         await speak_message_fallback(message)
     except Exception as e:
         logger.error(f"Error in speak_message_hq: {e}")
-        await message.reply(f"Error playing TTS: {e}")
+        # If wavelink fails, try fallback
+        if "No nodes are currently assigned" in str(e):
+            logger.info("Falling back to regular Discord audio")
+            await speak_message_fallback(message)
+        else:
+            await message.reply(f"Error playing TTS: {e}")
 
 async def speak_message_fallback(message):
     """Fallback to regular Discord audio if Lavalink fails"""
@@ -184,3 +181,9 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
     if player and not player.queue:  # No more tracks in queue
         await asyncio.sleep(2)  # Brief pause
         await player.disconnect()
+
+if __name__ == '__main__':
+    try:
+        bot.run(DISCORD_TOKEN)
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
