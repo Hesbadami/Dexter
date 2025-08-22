@@ -10,15 +10,13 @@ from sqlalchemy import text
 
 logger = logging.getLogger()
 
-
-
 class TaskManager:
     def __init__(self):
         self.session = db.get_session()
     
     def process_dump(self, dump_text: str) -> Dict[str, Any]:
         """Main entry point: process raw task dump"""
-        logger.info("🧠 Processing task dump...")
+        logger.info("Processing task dump...")
         
         # Step 1: Parse dump into structured tasks
         parsed_tasks = ai.parse_task_dump(dump_text)
@@ -35,7 +33,7 @@ class TaskManager:
             similar_tasks = self._find_similar_existing_tasks(task_data["content"])
             
             if similar_tasks:
-                logger.info(f"🔄 Found similar tasks, considering merge...")
+                logger.info(f"Found similar tasks, considering merge...")
                 # For now, create anyway - later we can implement smart merging
             
             # Step 3: Create task
@@ -55,81 +53,6 @@ class TaskManager:
         
         self.session.commit()
         return results
-    
-    def get_next_action(self) -> Optional[MicroUnit]:
-        """Binary decision: Get next micro-unit to execute (READ-ONLY)"""
-        # Get highest priority pending micro-unit WITHOUT changing status
-        next_unit = (
-            self.session.query(MicroUnit)
-            .join(Task)
-            .filter(MicroUnit.status == 'pending')
-            .filter(Task.status.in_(['pending', 'active']))
-            .order_by(Task.priority.desc(), MicroUnit.sequence_order.asc())
-            .first()
-        )
-        
-        if next_unit:
-            logger.info(f"🎯 Next target: {next_unit.description}")
-            return next_unit
-        
-        logger.info("✅ No pending tasks - you're clear!")
-        return None
-    
-    def start_micro_unit(self, micro_unit_id: int) -> bool:
-        """Mark micro-unit as active when you start working on it"""
-        micro_unit = self.session.get(MicroUnit, micro_unit_id)
-        
-        if not micro_unit:
-            logger.info(f"❌ Micro-unit {micro_unit_id} not found")
-            return False
-        
-        if micro_unit.status != 'pending':
-            logger.info(f"⚠️  Micro-unit {micro_unit_id} is not pending (status: {micro_unit.status})")
-            return False
-        
-        # Mark as active
-        micro_unit.status = 'active'
-        micro_unit.task.status = 'active'
-        self.session.commit()
-        
-        logger.info(f"▶️  Started: {micro_unit.description[:50]}...")
-        return True
-    
-    def complete_micro_unit(self, micro_unit_id: int, success: bool = True, 
-                          actual_minutes: int = None, notes: str = None):
-        """Mark micro-unit as complete and log execution"""
-        micro_unit = self.session.get(MicroUnit, micro_unit_id)
-        
-        if not micro_unit:
-            logger.info(f"❌ Micro-unit {micro_unit_id} not found")
-            return
-        
-        # Mark complete
-        micro_unit.mark_complete(actual_minutes)
-        
-        # Log execution
-        execution = Execution(
-            micro_unit_id=micro_unit_id,
-            completed_at=datetime.now(),
-            success=success,
-            notes=notes
-        )
-        self.session.add(execution)
-        
-        # Check if task is complete
-        remaining_units = (
-            self.session.query(MicroUnit)
-            .filter(MicroUnit.task_id == micro_unit.task_id)
-            .filter(MicroUnit.status == 'pending')
-            .count()
-        )
-        
-        if remaining_units == 0:
-            micro_unit.task.status = 'complete'
-            logger.info(f"🏆 Task complete: {micro_unit.task.content[:50]}...")
-        
-        self.session.commit()
-        logger.info(f"✅ Micro-unit completed: {micro_unit.description[:50]}...")
     
     def process_dump_with_cost(self, dump_text: str) -> tuple[Dict[str, Any], float]:
         """Main entry point: process raw task dump and return total OpenAI cost"""
@@ -175,6 +98,83 @@ class TaskManager:
         
         self.session.commit()
         return results, total_openai_cost
+    
+    def get_next_action(self) -> Optional[MicroUnit]:
+        """Binary decision: Get next micro-unit to execute (READ-ONLY)"""
+        # Get highest priority pending micro-unit WITHOUT changing status
+        next_unit = (
+            self.session.query(MicroUnit)
+            .join(Task)
+            .filter(MicroUnit.status == 'pending')
+            .filter(Task.status.in_(['pending', 'active']))
+            .order_by(Task.priority.desc(), MicroUnit.sequence_order.asc())
+            .first()
+        )
+        
+        if next_unit:
+            logger.info(f"Next target: {next_unit.description}")
+            return next_unit
+        
+        logger.info("No pending tasks - you're clear!")
+        return None
+    
+    def start_micro_unit(self, micro_unit_id: int) -> bool:
+        """Mark micro-unit as active when you start working on it"""
+        micro_unit = self.session.get(MicroUnit, micro_unit_id)
+        
+        if not micro_unit:
+            logger.warning(f"Micro-unit {micro_unit_id} not found")
+            return False
+        
+        if micro_unit.status != 'pending':
+            logger.warning(f"Micro-unit {micro_unit_id} is not pending (status: {micro_unit.status})")
+            return False
+        
+        # Mark as active
+        micro_unit.status = 'active'
+        micro_unit.task.status = 'active'
+        self.session.commit()
+        
+        logger.info(f"Started: {micro_unit.description[:50]}...")
+        return True
+    
+    def complete_micro_unit(self, micro_unit_id: int, success: bool = True, 
+                          actual_minutes: int = None, notes: str = None):
+        """Mark micro-unit as complete and log execution"""
+        micro_unit = self.session.get(MicroUnit, micro_unit_id)
+        
+        if not micro_unit:
+            logger.warning(f"Micro-unit {micro_unit_id} not found")
+            return
+        
+        # Mark complete
+        micro_unit.mark_complete(actual_minutes)
+        
+        # Log execution
+        execution = Execution(
+            micro_unit_id=micro_unit_id,
+            completed_at=datetime.now(),
+            success=success,
+            notes=notes
+        )
+        self.session.add(execution)
+        
+        # Check if task is complete
+        remaining_units = (
+            self.session.query(MicroUnit)
+            .filter(MicroUnit.task_id == micro_unit.task_id)
+            .filter(MicroUnit.status == 'pending')
+            .count()
+        )
+        
+        if remaining_units == 0:
+            micro_unit.task.status = 'complete'
+            logger.info(f"Task complete: {micro_unit.task.content[:50]}...")
+        
+        self.session.commit()
+        logger.info(f"Micro-unit completed: {micro_unit.description[:50]}...")
+    
+    def get_status_summary(self) -> Dict[str, Any]:
         """Get current status summary"""
         summary = {}
         
@@ -203,9 +203,6 @@ class TaskManager:
         )
         summary["today_completed"] = today_executions
         
-        # API costs
-        summary["total_api_cost"] = ai.get_total_cost()
-        
         return summary
     
     def _find_similar_existing_tasks(self, task_content: str) -> List[Task]:
@@ -229,7 +226,7 @@ class TaskManager:
                 return self.session.query(Task).filter(Task.id.in_(task_ids)).all()
             
         except Exception as e:
-            logger.info(f"⚠️  Full-text search failed, using fallback: {e}")
+            logger.warning(f"Full-text search failed, using fallback: {e}")
         
         return []
     
@@ -254,6 +251,27 @@ class TaskManager:
         self.session.flush()  # Get the ID
         return task
     
+    def _create_task_with_cost(self, task_data: Dict[str, Any]) -> tuple[Task, float]:
+        """Create a new task from parsed data and return OpenAI cost"""
+        priority, cost = ai.calculate_priority_with_cost(
+            task_data["content"], 
+            {"category": task_data.get("category")}
+        )
+        
+        task = Task(
+            content=task_data["content"],
+            priority=priority,
+            metadata={
+                "category": task_data.get("category"),
+                "estimated_complexity": task_data.get("estimated_complexity"),
+                "priority_hints": task_data.get("priority_hints")
+            }
+        )
+        
+        self.session.add(task)
+        self.session.flush()  # Get the ID
+        return task, cost
+    
     def _decompose_task(self, task: Task) -> List[MicroUnit]:
         """Decompose task into micro-units"""
         micro_data = ai.decompose_task(task.content)
@@ -274,6 +292,23 @@ class TaskManager:
             self.session.add(micro_unit)
         
         return micro_units
+    
+    def _decompose_task_with_cost(self, task: Task) -> tuple[List[MicroUnit], float]:
+        """Decompose task into micro-units and return OpenAI cost"""
+        micro_data, cost = ai.decompose_task_with_cost(task.content)
+        micro_units = []
+        
+        for i, unit_data in enumerate(micro_data):
+            micro_unit = MicroUnit(
+                task_id=task.id,
+                description=unit_data["description"],
+                sequence_order=unit_data.get("sequence_order", i + 1),
+                metadata={}
+            )
+            micro_units.append(micro_unit)
+            self.session.add(micro_unit)
+        
+        return micro_units, cost
     
     def close(self):
         """Close database session"""
