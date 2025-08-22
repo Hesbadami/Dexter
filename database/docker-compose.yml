@@ -5,6 +5,8 @@ services:
     image: postgres:15-alpine
     container_name: task_manager_db
     restart: unless-stopped
+    env_file:
+      - ../.env
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
@@ -20,6 +22,8 @@ services:
     image: dpage/pgadmin4:latest
     container_name: task_manager_pgadmin
     restart: unless-stopped
+    env_file:
+      - ../.env
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
