@@ -142,28 +142,28 @@ class TelegramBot:
         self.user_states[user_id] = "waiting_for_dump"
         self.send_voice_message(chat_id, "Send me your task dump")
     
-    def handle_tasks_command(self, chat_id: int, limit: Optional[int] = None) -> None:
-        """Handle /tasks command - list all pending micro-units"""
+    def handle_tasks_command(self, chat_id: int) -> None:
+        """Handle /tasks command - show task counts"""
         try:
             pending_units = self.get_pending_tasks()
             
-            if not pending_units:
+            # Count unique tasks
+            task_ids = set()
+            for unit in pending_units:
+                task_ids.add(unit.task_id)
+            
+            task_count = len(task_ids)
+            unit_count = len(pending_units)
+            
+            if task_count == 0:
                 self.send_voice_message(chat_id, "No pending tasks")
-                return
-            
-            # Apply limit if specified
-            if limit:
-                pending_units = pending_units[:limit]
-            
-            # Build task list - just descriptions
-            descriptions = [unit.description for unit in pending_units]
-            task_text = ". ".join(descriptions)
-            
-            self.send_voice_message(chat_id, task_text)
+            else:
+                message = f"{task_count} tasks, {unit_count} units"
+                self.send_voice_message(chat_id, message)
             
         except Exception as e:
-            logger.error(f"Error getting tasks: {e}")
-            self.send_voice_message(chat_id, "Error getting tasks")
+            logger.error(f"Error getting task counts: {e}")
+            self.send_voice_message(chat_id, "Error getting task counts")
     
     def handle_task_command(self, chat_id: int, count: Optional[int] = 1) -> None:
         """Handle /task command - get next task(s)"""
