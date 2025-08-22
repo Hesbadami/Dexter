@@ -39,7 +39,7 @@ class TelegramBot:
     def preprocess_text(self, text: str) -> str:
         """Clean text for TTS - keep only English letters, dots, and commas"""
         # Keep only English letters (a-z, A-Z), dots, commas, and spaces
-        cleaned = re.sub(r'[^a-zA-Z.,\s]', '', text)
+        cleaned = re.sub(r'[^a-zA-Z0-9.,\s]', '', text)
         # Clean up multiple spaces
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         return cleaned
