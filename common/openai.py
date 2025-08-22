@@ -9,19 +9,26 @@ from openai import OpenAI
 
 logger = logging.getLogger()
 
+
 class AIEngine:
     def __init__(self):
-        api_key = OPENAI_API_KEY
+        api_key = os.getenv('OPENAI_API_KEY')
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found in environment variables")
         
         self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-5-nano"  # or gpt-3.5-turbo for cheaper option
+        self.model = "gpt-5-nano"  # Using gpt-4o-mini (nano equivalent)
+        self.total_cost = 0.0
+        
+        # Pricing per 1M tokens (as of 2024)
+        self.pricing = {
+            "gpt-4o-mini": {"input": 0.15, "output": 0.60}  # $0.15/$0.60 per 1M tokens
+        }
     
     def parse_task_dump(self, dump_text: str) -> List[Dict[str, Any]]:
         """Parse raw task dump into structured tasks"""
         system_prompt = """
-        You are Dexter Morgan, a surgical task decomposition engine. Parse the user's brain dump into clean, actionable tasks.
+        You are a surgical task decomposition engine. Parse the user's brain dump into clean, actionable tasks.
         
         Extract distinct tasks and return them as JSON array with this structure:
         [
@@ -46,8 +53,10 @@ class AIEngine:
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Parse this task dump:\n\n{dump_text}"}
-                ]
+                ],
             )
+            
+            self._track_cost(response)
             
             content = response.choices[0].message.content
             # Extract JSON from response
@@ -58,13 +67,37 @@ class AIEngine:
             return json.loads(json_str)
         
         except Exception as e:
-            logger.error(f"Failed to parse task dump: {e}")
+            logger.info(f"❌ Failed to parse task dump: {e}")
             return []
+        
+    def _track_cost(self, response):
+        """Track API costs from response"""
+        if hasattr(response, 'usage') and response.usage:
+            usage = response.usage
+            input_tokens = usage.prompt_tokens
+            output_tokens = usage.completion_tokens
+            
+            # Calculate cost
+            input_cost = (input_tokens / 1_000_000) * self.pricing[self.model]["input"]
+            output_cost = (output_tokens / 1_000_000) * self.pricing[self.model]["output"]
+            total_cost = input_cost + output_cost
+            
+            self.total_cost += total_cost
+            
+            logger.info(f"💰 API Call: ${total_cost:.4f} (${self.total_cost:.4f} total)")
+    
+    def get_total_cost(self) -> float:
+        """Get total accumulated API costs"""
+        return self.total_cost
+    
+    def reset_cost_tracking(self):
+        """Reset cost tracking"""
+        self.total_cost = 0.0
     
     def decompose_task(self, task_content: str) -> List[Dict[str, Any]]:
         """Decompose a task into atomic micro-units"""
         system_prompt = """
-        You are Dexter Morgan, a micro-unit decomposition specialist. Break down the given task into atomic, executable micro-units.
+        You are a micro-unit decomposition specialist. Break down the given task into atomic, executable micro-units.
         
         Return JSON array with this structure:
         [
@@ -92,8 +125,10 @@ class AIEngine:
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Decompose this task:\n\n{task_content}"}
-                ]
+                ],
             )
+            
+            self._track_cost(response)
             
             content = response.choices[0].message.content
             start_idx = content.find('[')
@@ -103,13 +138,13 @@ class AIEngine:
             return json.loads(json_str)
         
         except Exception as e:
-            logger.error(f"Failed to decompose task: {e}")
+            logger.info(f"❌ Failed to decompose task: {e}")
             return []
     
-    def calculate_priority(self, task_content: str, task_metadata: Dict = None) -> int:
+    def calculate_priority(self, task_content: str, metadata: Dict = None) -> int:
         """Calculate priority score based on leverage, control, urgency"""
         system_prompt = """
-        You are Dexter Morgan, Calculate a priority score (1-100) for this task based on:
+        Calculate a priority score (1-100) for this task based on:
         - Leverage: Impact on life/career/control (0-40 points)
         - Control: Can act independently without dependencies (0-30 points)  
         - Urgency: Deadline pressure or decay risk (0-30 points)
@@ -119,22 +154,24 @@ class AIEngine:
         
         try:
             context = f"Task: {task_content}"
-            if task_metadata:
-                context += f"\nMetadata: {json.dumps(task_metadata, indent=2)}"
+            if metadata:
+                context += f"\nMetadata: {json.dumps(metadata, indent=2)}"
             
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": context}
-                ]
+                ],
             )
+            
+            self._track_cost(response)
             
             score = int(response.choices[0].message.content.strip())
             return max(1, min(100, score))  # Clamp between 1-100
         
         except Exception as e:
-            logger.error(f"Failed to calculate priority: {e}")
+            logger.info(f"❌ Failed to calculate priority: {e}")
             return 50  # Default priority
     
     def find_similar_tasks(self, new_task: str, existing_tasks: List[str]) -> List[Dict[str, Any]]:
@@ -143,7 +180,7 @@ class AIEngine:
             return []
         
         system_prompt = """
-        You are Dexter Morgan, Compare the new task against existing tasks and find similar ones that could be merged.
+        Compare the new task against existing tasks and find similar ones that could be merged.
         
         Return JSON array with this structure:
         [
@@ -169,6 +206,8 @@ class AIEngine:
                 ],
             )
             
+            self._track_cost(response)
+            
             content = response.choices[0].message.content
             if '[' in content and ']' in content:
                 start_idx = content.find('[')
@@ -179,7 +218,7 @@ class AIEngine:
             return []
         
         except Exception as e:
-            logger.error(f"Failed to find similar tasks: {e}")
+            logger.info(f"❌ Failed to find similar tasks: {e}")
             return []
 
 # Global AI engine instance

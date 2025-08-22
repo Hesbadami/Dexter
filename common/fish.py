@@ -23,7 +23,8 @@ class FishClient:
         cost = (bytes_count / 1_000_000) * self.cost_per_million_bytes
         return bytes_count, cost
 
-    def text_to_mp3(self, text: str):
+    def text_to_mp3_with_cost(self, text: str):
+        """Generate TTS and return file path with cost"""
         logger.info(f"Attempting TTS")
         
         bytes_used, cost = self.calculate_cost(text)
@@ -31,7 +32,7 @@ class FishClient:
         logger.info(f"TTS Request - Text: '{text[:50]}...' | Bytes: {bytes_used:,} | Cost: ${cost:.6f}")
         
         file_path = f'media/{text[:5]}_{datetime.now().timestamp()}.mp3'
-        
+
         with open(file_path, 'wb') as f:
             for chunk in self.session.tts(
                 TTSRequest(
@@ -43,4 +44,4 @@ class FishClient:
 
         logger.info(f"Successfully wrote audio to {file_path}")
         
-        return file_path
+        return file_path, cost

@@ -64,13 +64,15 @@ class TelegramBot:
             logger.error(f"Failed to remove keyboard: {e}")
             return False
     
-    def send_voice_message(self, chat_id: int, text: str) -> bool:
-        """Send voice message via TTS with caching"""
+    def send_voice_message(self, chat_id: int, text: str, openai_cost: float = 0.0) -> bool:
+        """Send voice message via TTS with caching and cost tracking"""
         try:
             # Preprocess text
             clean_text = self.preprocess_text(text)
             if not clean_text:
                 return False
+            
+            fish_cost = 0.0
             
             # Check cache
             text_hash = self.get_text_hash(clean_text)
@@ -78,17 +80,24 @@ class TelegramBot:
             if text_hash in self.tts_cache and os.path.exists(self.tts_cache[text_hash]):
                 mp3_path = self.tts_cache[text_hash]
                 logger.info(f"Using cached TTS for: {clean_text[:50]}...")
+                # No fish cost for cached audio
             else:
-                # Generate new MP3
-                mp3_path = self.fish.text_to_mp3(clean_text)
+                # Generate new MP3 and get cost
+                mp3_path, fish_cost = self.fish.text_to_mp3_with_cost(clean_text)
                 # Cache the result
                 self.tts_cache[text_hash] = mp3_path
             
-            # Send voice message
+            # Build caption with costs
+            caption = f"Fish: ${fish_cost:.4f} | OpenAI: ${openai_cost:.4f}"
+            
+            # Send voice message with caption
             url = f"{self.base_url}/sendVoice"
             with open(mp3_path, 'rb') as audio:
                 files = {'voice': audio}
-                data = {'chat_id': chat_id}
+                data = {
+                    'chat_id': chat_id,
+                    'caption': caption
+                }
                 response = requests.post(url, data=data, files=files)
                 return response.status_code == 200
                 
@@ -221,23 +230,25 @@ class TelegramBot:
         try:
             # Check cache first
             dump_hash = self.get_text_hash(dump_text)
+            openai_cost = 0.0
             
             if dump_hash in self.dump_cache:
                 logger.info(f"Using cached dump result for: {dump_text[:50]}...")
                 results = self.dump_cache[dump_hash]
+                # No OpenAI cost for cached results
             else:
                 self.send_voice_message(chat_id, "Processing tasks")
-                results = self.task_manager.process_dump(dump_text)
+                results, openai_cost = self.task_manager.process_dump_with_cost(dump_text)
                 # Cache the result
                 self.dump_cache[dump_hash] = results
             
             if results["new_tasks"] == 0:
-                self.send_voice_message(chat_id, "No tasks could be extracted from your input")
+                self.send_voice_message(chat_id, "No tasks could be extracted from your input", openai_cost)
                 return
             
             # Simple completion message
             message = f"Created {results['new_tasks']} tasks with {results['total_micro_units']} units"
-            self.send_voice_message(chat_id, message)
+            self.send_voice_message(chat_id, message, openai_cost)
             
         except Exception as e:
             logger.error(f"Error processing dump: {e}")

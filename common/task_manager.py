@@ -18,7 +18,7 @@ class TaskManager:
     
     def process_dump(self, dump_text: str) -> Dict[str, Any]:
         """Main entry point: process raw task dump"""
-        logger.info("Processing task dump...")
+        logger.info("🧠 Processing task dump...")
         
         # Step 1: Parse dump into structured tasks
         parsed_tasks = ai.parse_task_dump(dump_text)
@@ -35,7 +35,7 @@ class TaskManager:
             similar_tasks = self._find_similar_existing_tasks(task_data["content"])
             
             if similar_tasks:
-                logger.info(f"Found similar tasks, considering merge...")
+                logger.info(f"🔄 Found similar tasks, considering merge...")
                 # For now, create anyway - later we can implement smart merging
             
             # Step 3: Create task
@@ -69,10 +69,10 @@ class TaskManager:
         )
         
         if next_unit:
-            logger.info(f"Next target: {next_unit.description}")
+            logger.info(f"🎯 Next target: {next_unit.description}")
             return next_unit
         
-        logger.info("No pending tasks - you're clear!")
+        logger.info("✅ No pending tasks - you're clear!")
         return None
     
     def start_micro_unit(self, micro_unit_id: int) -> bool:
@@ -80,11 +80,11 @@ class TaskManager:
         micro_unit = self.session.get(MicroUnit, micro_unit_id)
         
         if not micro_unit:
-            logger.info(f"Micro-unit {micro_unit_id} not found")
+            logger.info(f"❌ Micro-unit {micro_unit_id} not found")
             return False
         
         if micro_unit.status != 'pending':
-            logger.info(f"Micro-unit {micro_unit_id} is not pending (status: {micro_unit.status})")
+            logger.info(f"⚠️  Micro-unit {micro_unit_id} is not pending (status: {micro_unit.status})")
             return False
         
         # Mark as active
@@ -92,7 +92,7 @@ class TaskManager:
         micro_unit.task.status = 'active'
         self.session.commit()
         
-        logger.info(f"Started: {micro_unit.description[:50]}...")
+        logger.info(f"▶️  Started: {micro_unit.description[:50]}...")
         return True
     
     def complete_micro_unit(self, micro_unit_id: int, success: bool = True, 
@@ -101,7 +101,7 @@ class TaskManager:
         micro_unit = self.session.get(MicroUnit, micro_unit_id)
         
         if not micro_unit:
-            logger.info(f"Micro-unit {micro_unit_id} not found")
+            logger.info(f"❌ Micro-unit {micro_unit_id} not found")
             return
         
         # Mark complete
@@ -126,12 +126,55 @@ class TaskManager:
         
         if remaining_units == 0:
             micro_unit.task.status = 'complete'
-            logger.info(f"Task complete: {micro_unit.task.content[:50]}...")
+            logger.info(f"🏆 Task complete: {micro_unit.task.content[:50]}...")
         
         self.session.commit()
-        logger.info(f"Micro-unit completed: {micro_unit.description[:50]}...")
+        logger.info(f"✅ Micro-unit completed: {micro_unit.description[:50]}...")
     
-    def get_status_summary(self) -> Dict[str, Any]:
+    def process_dump_with_cost(self, dump_text: str) -> tuple[Dict[str, Any], float]:
+        """Main entry point: process raw task dump and return total OpenAI cost"""
+        logger.info("Processing task dump...")
+        
+        total_openai_cost = 0.0
+        
+        # Step 1: Parse dump into structured tasks
+        parsed_tasks, parse_cost = ai.parse_task_dump_with_cost(dump_text)
+        total_openai_cost += parse_cost
+        
+        results = {
+            "new_tasks": 0,
+            "merged_tasks": 0,
+            "total_micro_units": 0,
+            "tasks_created": []
+        }
+        
+        for task_data in parsed_tasks:
+            # Step 2: Check for similar existing tasks
+            similar_tasks = self._find_similar_existing_tasks(task_data["content"])
+            
+            if similar_tasks:
+                logger.info(f"Found similar tasks, considering merge...")
+                # For now, create anyway - later we can implement smart merging
+            
+            # Step 3: Create task (includes priority calculation cost)
+            task, priority_cost = self._create_task_with_cost(task_data)
+            total_openai_cost += priority_cost
+            
+            # Step 4: Decompose into micro-units
+            micro_units, decompose_cost = self._decompose_task_with_cost(task)
+            total_openai_cost += decompose_cost
+            
+            results["new_tasks"] += 1
+            results["total_micro_units"] += len(micro_units)
+            results["tasks_created"].append({
+                "task_id": task.id,
+                "content": task.content[:50] + "...",
+                "micro_units": len(micro_units),
+                "priority": task.priority
+            })
+        
+        self.session.commit()
+        return results, total_openai_cost
         """Get current status summary"""
         summary = {}
         
@@ -186,7 +229,7 @@ class TaskManager:
                 return self.session.query(Task).filter(Task.id.in_(task_ids)).all()
             
         except Exception as e:
-            logger.info(f"Full-text search failed, using fallback: {e}")
+            logger.info(f"⚠️  Full-text search failed, using fallback: {e}")
         
         return []
     
