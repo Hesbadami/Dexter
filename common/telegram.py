@@ -275,7 +275,7 @@ class TelegramBot:
             text = message.get("text", "")
             
             # Security check: Only allow admin user
-            if user_id != ADMIN_USER_ID:
+            if int(user_id) != int(ADMIN_USER_ID):
                 logger.warning(f"Unauthorized access attempt from user {user_id}")
                 return  # Silently drop the message
             
