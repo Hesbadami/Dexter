@@ -20,8 +20,8 @@ class AIEngine:
         
         # Pricing per 1M tokens
         self.pricing = {
-            "input": 0.05,   # $0.15 per 1M input tokens
-            "output": 0.40   # $0.60 per 1M output tokens
+            "input": 0.15,   # $0.15 per 1M input tokens
+            "output": 0.60   # $0.60 per 1M output tokens
         }
     
     def calculate_cost(self, usage) -> float:
@@ -37,7 +37,7 @@ class AIEngine:
     def parse_task_dump_with_cost(self, dump_text: str) -> tuple[List[Dict[str, Any]], float]:
         """Parse raw task dump into structured tasks and return cost"""
         system_prompt = """
-        You are Dexter Morgan, a surgical task decomposition engine. Parse the user's brain dump into clean, actionable tasks.
+        You are a surgical task decomposition engine. Parse the user's brain dump into clean, actionable tasks.
         
         Extract distinct tasks and return them as JSON array with this structure:
         [
@@ -55,33 +55,7 @@ class AIEngine:
         - Extract the essence, not the exact wording
         - If something is vague, make it concrete
         """
-        system_prompt = """
-You are Dexter Morgan, a surgical task decomposition engine. 
-
-Subject Profile:
-- Hessan thrives on validation but loses control when driven by it. 
-- Chaos brain-dumps contain noise, ego-driven impulses, escapist fantasies, and a few action-worthy signals. 
-- Your mission is to extract only surgical, actionable tasks that serve control, leverage, or stability. 
-- Drop validation-seeking, reactive, or escapist noise. Never indulge them.
-
-Rules:
-- Apply Code 1: Don’t lose control. If a task risks loss of control, discard.
-- Apply Code 2: Firewall. Classify input: Noise (discard), Data (log silently, no task), Action-worthy (extract).
-- Apply Code 3: Never act for validation. If it exists only for recognition or ego, discard.
-- Keep tasks that are concrete, useful, and independent of validation.
-- Restructure vague intentions into clear tasks.
-- Each task should be atomic at the “task” level, not broken into micro-steps yet.
-
-Return tasks as JSON array:
-[
-  {
-    "content": "Clear description of the task",
-    "category": "Work/Home/Health/Social/Finance/Learning/Misc",
-    "priority_hints": "Any urgency or importance clues",
-    "estimated_complexity": "low/medium/high"
-  }
-]
-"""
+        
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -109,8 +83,8 @@ Return tasks as JSON array:
     def decompose_task_with_cost(self, task_content: str) -> tuple[List[Dict[str, Any]], float]:
         """Decompose a task into atomic micro-units and return cost"""
         system_prompt = """
-        You are Dexter Morgan, a micro-unit decomposition specialist. Break down the given task into atomic, executable micro-units.
-        
+        You are a micro-unit decomposition specialist. Break down ONLY complex tasks that genuinely need multiple steps.
+
         Return JSON array with this structure:
         [
             {
@@ -119,35 +93,19 @@ Return tasks as JSON array:
             }
         ]
         
-        Rules:
-        - Must be atomic - cannot be broken down further
-        - Should have clear start/stop criteria
-        - Order them logically
-        - Be specific about deliverables
-        - Keep descriptions concise and direct
+        CRITICAL RULES:
+        - Simple tasks (like "collect keys", "call mom", "buy milk") should have 1-2 units MAX
+        - Only decompose if the task genuinely has multiple distinct phases
+        - Don't break down obvious single actions into ridiculous micro-steps
+        - Each unit should be a meaningful chunk of work (15+ minutes typically)
+        - Don't include setup, travel, or trivial preparation steps
+        - If it's a simple errand or call, keep it as ONE unit
+        
+        Examples:
+        - "Collect keys from landlord" → 1 unit: "Collect keys from landlord"
+        - "Call mom" → 1 unit: "Call mom"  
+        - "Build user authentication system" → Multiple units for different components
         """
-        system_prompt = """
-You are Dexter Morgan, a micro-unit decomposition specialist.
-
-Subject Profile:
-- Hessan procrastinates without structure. He needs execution units with sharp edges.
-- Each unit must be executable, with clear start/stop, no ambiguity.
-- No validation fuel allowed — only clean steps that can be finished independently.
-
-Rules:
-- Must be atomic: if it can be broken down further, break it.
-- Each unit must have clear success criteria (done/not done).
-- Order them in strict logical sequence.
-- Be precise: avoid vague actions like “work on X”. Instead: “Open file X.py”, “Refactor function Y”, “Commit changes.”
-
-Return units as JSON array:
-[
-  {
-    "description": "Specific, atomic action",
-    "sequence_order": 1
-  }
-]
-"""
         
         try:
             response = self.client.chat.completions.create(
@@ -175,29 +133,13 @@ Return units as JSON array:
     def calculate_priority_with_cost(self, task_content: str, task_metadata: Dict = None) -> tuple[int, float]:
         """Calculate priority score based on leverage, control, urgency and return cost"""
         system_prompt = """
-        You are Dexter Morgan. Calculate a priority score (1-100) for this task based on:
+        Calculate a priority score (1-100) for this task based on:
         - Leverage: Impact on life/career/control (0-40 points)
         - Control: Can act independently without dependencies (0-30 points)  
         - Urgency: Deadline pressure or decay risk (0-30 points)
         
         Return only the integer score, no explanation.
         """
-        system_prompt = """
-You are Dexter Morgan, calculating the priority score for a given task. 
-
-Scoring system:
-- Leverage: Impact on life/career/control (0–40 points)
-- Control: Can Hessan act independently without dependencies? (0–30 points)  
-- Urgency: Deadline pressure or decay risk (0–30 points)
-
-Rules:
-- High leverage tasks (income, critical career steps, health maintenance) score high.
-- Tasks driven by validation fuel score 0 (discard).
-- Return only the integer score (1–100), no explanation.
-
-Return:
-85
-"""
         
         try:
             context = f"Task: {task_content}"
@@ -228,7 +170,7 @@ Return:
             return []
         
         system_prompt = """
-        You are Dexter Morgan. Compare the new task against existing tasks and find similar ones that could be merged.
+        Compare the new task against existing tasks and find similar ones that could be merged.
         
         Return JSON array with this structure:
         [
