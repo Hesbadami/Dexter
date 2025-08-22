@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional, List
 import time
 from threading import Thread
 
-from common.config import TELEGRAM_BOT_TOKEN
+from common.config import TELEGRAM_BOT_TOKEN, ADMIN_USER_ID
 from common.task_manager import create_task_manager
 from common.fish import FishClient
 
@@ -273,6 +273,11 @@ class TelegramBot:
             chat_id = message["chat"]["id"]
             user_id = message["from"]["id"]
             text = message.get("text", "")
+            
+            # Security check: Only allow admin user
+            if user_id != ADMIN_USER_ID:
+                logger.warning(f"Unauthorized access attempt from user {user_id}")
+                return  # Silently drop the message
             
             # Get current user state
             current_state = self.user_states.get(user_id)
