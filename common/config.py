@@ -5,6 +5,7 @@ import os
 import logging
 import logging.config
 import logging.handlers
+from urllib.parse import quote_plus
 
 load_dotenv()
 
@@ -52,3 +53,15 @@ FISH_SECRET = os.environ.get('FISH_API')
 FISH_MODEL_ID = os.environ.get('FISH_MODEL_ID')
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
+
+DB_CFG = {
+    'db_user': quote_plus(os.getenv('DB_USER', 'taskuser')),
+    'db_password': quote_plus(os.getenv('DB_PASSWORD', '')),
+    'db_name': os.getenv('DB_NAME', 'task_manager'),
+    'db_host': '127.0.0.1',
+    'db_port': '5432'
+}
+
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')

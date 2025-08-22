@@ -4,3 +4,10 @@ python-dotenv
 requests
 wavelink
 discord.py[voice]
+
+sqlalchemy
+psycopg2-binary
+openai
+alembic
+click
+rich
