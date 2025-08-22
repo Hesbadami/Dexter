@@ -2,6 +2,8 @@ import requests
 import json
 import logging
 import re
+import hashlib
+import os
 from typing import Dict, Any, Optional, List
 import time
 from threading import Thread
@@ -26,6 +28,13 @@ class TelegramBot:
         
         # User states for conversation flow
         self.user_states = {}  # user_id -> current_state
+        
+        # Caching
+        self.tts_cache = {}    # text_hash -> file_path
+        self.dump_cache = {}   # dump_hash -> results
+        
+        # Ensure media directory exists
+        os.makedirs('media', exist_ok=True)
     
     def preprocess_text(self, text: str) -> str:
         """Clean text for TTS - keep only English letters, dots, and commas"""
@@ -35,16 +44,45 @@ class TelegramBot:
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         return cleaned
     
+    def get_text_hash(self, text: str) -> str:
+        """Get hash for text caching"""
+        return hashlib.md5(text.encode()).hexdigest()
+    
+    def remove_keyboard(self, chat_id: int) -> bool:
+        """Remove custom keyboard"""
+        url = f"{self.base_url}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": "Keyboard removed. Use slash commands.",
+            "reply_markup": json.dumps({"remove_keyboard": True})
+        }
+        
+        try:
+            response = requests.post(url, data=data)
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"Failed to remove keyboard: {e}")
+            return False
+    
     def send_voice_message(self, chat_id: int, text: str) -> bool:
-        """Send voice message via TTS"""
+        """Send voice message via TTS with caching"""
         try:
             # Preprocess text
             clean_text = self.preprocess_text(text)
             if not clean_text:
                 return False
             
-            # Generate MP3
-            mp3_path = self.fish.text_to_mp3(clean_text)
+            # Check cache
+            text_hash = self.get_text_hash(clean_text)
+            
+            if text_hash in self.tts_cache and os.path.exists(self.tts_cache[text_hash]):
+                mp3_path = self.tts_cache[text_hash]
+                logger.info(f"Using cached TTS for: {clean_text[:50]}...")
+            else:
+                # Generate new MP3
+                mp3_path = self.fish.text_to_mp3(clean_text)
+                # Cache the result
+                self.tts_cache[text_hash] = mp3_path
             
             # Send voice message
             url = f"{self.base_url}/sendVoice"
@@ -77,86 +115,121 @@ class TelegramBot:
         
         return []
     
+    def get_pending_tasks(self) -> List:
+        """Get all pending micro-units ordered by priority"""
+        from database.models import MicroUnit, Task
+        
+        return (
+            self.task_manager.session.query(MicroUnit)
+            .join(Task)
+            .filter(MicroUnit.status == 'pending')
+            .filter(Task.status.in_(['pending', 'active']))
+            .order_by(Task.priority.desc(), MicroUnit.sequence_order.asc())
+            .all()
+        )
+    
     def handle_dump_command(self, chat_id: int, user_id: int) -> None:
         """Handle /dump command"""
         self.user_states[user_id] = "waiting_for_dump"
         self.send_voice_message(chat_id, "Send me your task dump")
     
-    def handle_tasks_command(self, chat_id: int) -> None:
+    def handle_tasks_command(self, chat_id: int, limit: Optional[int] = None) -> None:
         """Handle /tasks command - list all pending micro-units"""
         try:
-            from database.models import MicroUnit, Task
-            
-            # Get all pending micro-units ordered by priority
-            pending_units = (
-                self.task_manager.session.query(MicroUnit)
-                .join(Task)
-                .filter(MicroUnit.status == 'pending')
-                .filter(Task.status.in_(['pending', 'active']))
-                .order_by(Task.priority.desc(), MicroUnit.sequence_order.asc())
-                .all()
-            )
+            pending_units = self.get_pending_tasks()
             
             if not pending_units:
                 self.send_voice_message(chat_id, "No pending tasks")
                 return
             
-            # Build task list
-            task_list = "Task list. "
-            for i, unit in enumerate(pending_units[:20], 1):  # Limit to 20 for voice
-                task_list += f"Number {i}. ID {unit.id}. {unit.description}. "
+            # Apply limit if specified
+            if limit:
+                pending_units = pending_units[:limit]
             
-            if len(pending_units) > 20:
-                task_list += f"And {len(pending_units) - 20} more tasks."
+            # Build task list - just descriptions
+            descriptions = [unit.description for unit in pending_units]
+            task_text = ". ".join(descriptions)
             
-            self.send_voice_message(chat_id, task_list)
+            self.send_voice_message(chat_id, task_text)
             
         except Exception as e:
             logger.error(f"Error getting tasks: {e}")
             self.send_voice_message(chat_id, "Error getting tasks")
     
-    def handle_delete_command(self, chat_id: int, task_id_str: str) -> None:
-        """Handle /delete command"""
+    def handle_task_command(self, chat_id: int, count: Optional[int] = 1) -> None:
+        """Handle /task command - get next task(s)"""
         try:
-            task_id = int(task_id_str.strip())
+            pending_units = self.get_pending_tasks()
             
-            # Find and delete the micro-unit
-            from database.models import MicroUnit
-            micro_unit = self.task_manager.session.get(MicroUnit, task_id)
-            
-            if not micro_unit:
-                self.send_voice_message(chat_id, f"Task ID {task_id} not found")
+            if not pending_units:
+                self.send_voice_message(chat_id, "No pending tasks")
                 return
             
-            # Get description before deletion
-            description = micro_unit.description[:50]
+            # Get the specified number of tasks
+            tasks_to_show = pending_units[:count]
+            descriptions = [unit.description for unit in tasks_to_show]
+            task_text = ". ".join(descriptions)
             
-            # Delete the micro-unit
-            self.task_manager.session.delete(micro_unit)
+            self.send_voice_message(chat_id, task_text)
+            
+        except Exception as e:
+            logger.error(f"Error getting next task: {e}")
+            self.send_voice_message(chat_id, "Error getting next task")
+    
+    def handle_done_command(self, chat_id: int) -> None:
+        """Handle /done command - complete first task"""
+        try:
+            pending_units = self.get_pending_tasks()
+            
+            if not pending_units:
+                self.send_voice_message(chat_id, "No tasks to complete")
+                return
+            
+            # Complete the first task
+            first_task = pending_units[0]
+            self.task_manager.complete_micro_unit(first_task.id, success=True)
+            
+            self.send_voice_message(chat_id, "Task completed")
+            
+        except Exception as e:
+            logger.error(f"Error completing task: {e}")
+            self.send_voice_message(chat_id, "Error completing task")
+    
+    def handle_clear_command(self, chat_id: int) -> None:
+        """Handle /clear command - delete all tasks"""
+        try:
+            from database.models import Task, MicroUnit
+            
+            # Delete all tasks and micro-units
+            self.task_manager.session.query(MicroUnit).delete()
+            self.task_manager.session.query(Task).delete()
             self.task_manager.session.commit()
             
-            self.send_voice_message(chat_id, f"Deleted task {task_id}")
+            self.send_voice_message(chat_id, "All tasks cleared")
             
-        except ValueError:
-            self.send_voice_message(chat_id, "Invalid task ID format")
         except Exception as e:
-            logger.error(f"Error deleting task: {e}")
-            self.send_voice_message(chat_id, "Error deleting task")
+            logger.error(f"Error clearing tasks: {e}")
+            self.send_voice_message(chat_id, "Error clearing tasks")
     
-    def handle_transcribe_command(self, chat_id: int, text: str) -> None:
-        """Handle /transcribe command"""
-        if not text.strip():
-            self.send_voice_message(chat_id, "Please provide text to transcribe")
-            return
-        
-        self.send_voice_message(chat_id, text)
+    def handle_tts_command(self, chat_id: int, user_id: int) -> None:
+        """Handle /tts command - wait for next message to convert"""
+        self.user_states[user_id] = "waiting_for_tts"
+        # Don't send any response, just wait for next message
     
     def process_dump(self, chat_id: int, user_id: int, dump_text: str) -> None:
-        """Process task dump"""
+        """Process task dump with caching"""
         try:
-            self.send_voice_message(chat_id, "Processing tasks")
+            # Check cache first
+            dump_hash = self.get_text_hash(dump_text)
             
-            results = self.task_manager.process_dump(dump_text)
+            if dump_hash in self.dump_cache:
+                logger.info(f"Using cached dump result for: {dump_text[:50]}...")
+                results = self.dump_cache[dump_hash]
+            else:
+                self.send_voice_message(chat_id, "Processing tasks")
+                results = self.task_manager.process_dump(dump_text)
+                # Cache the result
+                self.dump_cache[dump_hash] = results
             
             if results["new_tasks"] == 0:
                 self.send_voice_message(chat_id, "No tasks could be extracted from your input")
@@ -169,6 +242,16 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Error processing dump: {e}")
             self.send_voice_message(chat_id, "Error processing tasks")
+        finally:
+            # Reset state
+            self.user_states.pop(user_id, None)
+    
+    def process_tts_text(self, chat_id: int, user_id: int, text: str) -> None:
+        """Process text for TTS conversion"""
+        try:
+            self.send_voice_message(chat_id, text)
+        except Exception as e:
+            logger.error(f"Error processing TTS: {e}")
         finally:
             # Reset state
             self.user_states.pop(user_id, None)
@@ -187,6 +270,9 @@ class TelegramBot:
             if current_state == "waiting_for_dump":
                 self.process_dump(chat_id, user_id, text)
                 return
+            elif current_state == "waiting_for_tts":
+                self.process_tts_text(chat_id, user_id, text)
+                return
             
             # Handle commands
             if text.startswith("/"):
@@ -195,7 +281,9 @@ class TelegramBot:
                 args = parts[1] if len(parts) > 1 else ""
                 
                 if command == "/start":
-                    self.send_voice_message(chat_id, "Task manager ready. Use slash dump to add tasks, slash tasks to list them, slash delete with ID to remove")
+                    # Remove old keyboard if it exists
+                    self.remove_keyboard(chat_id)
+                    self.send_voice_message(chat_id, "Task manager ready. Use slash dump to add tasks, slash task for next task, slash done to complete")
                     
                 elif command == "/dump":
                     self.handle_dump_command(chat_id, user_id)
@@ -203,23 +291,27 @@ class TelegramBot:
                 elif command == "/tasks":
                     self.handle_tasks_command(chat_id)
                     
-                elif command == "/delete":
-                    if args:
-                        self.handle_delete_command(chat_id, args)
+                elif command == "/task":
+                    if args and args.isdigit():
+                        count = int(args)
+                        self.handle_task_command(chat_id, count)
                     else:
-                        self.send_voice_message(chat_id, "Please provide task ID to delete")
+                        self.handle_task_command(chat_id, 1)
                         
-                elif command == "/transcribe":
-                    if args:
-                        self.handle_transcribe_command(chat_id, args)
-                    else:
-                        self.send_voice_message(chat_id, "Please provide text to transcribe")
+                elif command == "/done":
+                    self.handle_done_command(chat_id)
+                    
+                elif command == "/clear":
+                    self.handle_clear_command(chat_id)
+                    
+                elif command == "/tts":
+                    self.handle_tts_command(chat_id, user_id)
                         
                 else:
                     self.send_voice_message(chat_id, "Unknown command")
             else:
-                # Non-command text
-                self.send_voice_message(chat_id, "Use slash commands. slash dump, slash tasks, slash delete, slash transcribe")
+                # Non-command text when not in a state
+                self.send_voice_message(chat_id, "Use slash commands")
                 
         except Exception as e:
             logger.error(f"Error handling message: {e}")

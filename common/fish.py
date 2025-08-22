@@ -1,6 +1,7 @@
 import logging
 import requests
 from datetime import datetime
+import os
 
 from common.config import FISH_SECRET, FISH_MODEL_ID
 
@@ -13,6 +14,9 @@ class FishClient:
     def __init__(self):
         self.session = Session(FISH_SECRET)
         self.cost_per_million_bytes = 15.00
+        
+        # Ensure media directory exists
+        os.makedirs('media', exist_ok=True)
     
     def calculate_cost(self, text: str):
         bytes_count = len(text.encode('utf-8'))
@@ -27,7 +31,7 @@ class FishClient:
         logger.info(f"TTS Request - Text: '{text[:50]}...' | Bytes: {bytes_used:,} | Cost: ${cost:.6f}")
         
         file_path = f'media/{text[:5]}_{datetime.now().timestamp()}.mp3'
-
+        
         with open(file_path, 'wb') as f:
             for chunk in self.session.tts(
                 TTSRequest(
