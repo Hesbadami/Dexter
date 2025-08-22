@@ -186,7 +186,7 @@ class TelegramBot:
             self.send_voice_message(chat_id, "Error getting next task")
     
     def handle_done_command(self, chat_id: int) -> None:
-        """Handle /done command - complete first task"""
+        """Handle /done command - complete first task and read next"""
         try:
             pending_units = self.get_pending_tasks()
             
@@ -198,7 +198,15 @@ class TelegramBot:
             first_task = pending_units[0]
             self.task_manager.complete_micro_unit(first_task.id, success=True)
             
-            self.send_voice_message(chat_id, "Task completed")
+            # Get next task after completion
+            next_pending = self.get_pending_tasks()
+            
+            if next_pending:
+                # Read the next task
+                next_task_text = next_pending[0].description
+                self.send_voice_message(chat_id, next_task_text)
+            else:
+                self.send_voice_message(chat_id, "No more tasks")
             
         except Exception as e:
             logger.error(f"Error completing task: {e}")
@@ -207,17 +215,26 @@ class TelegramBot:
     def handle_clear_command(self, chat_id: int) -> None:
         """Handle /clear command - delete all tasks"""
         try:
-            from database.models import Task, MicroUnit
+            from database.models import Task, MicroUnit, Execution
             
-            # Delete all tasks and micro-units
+            # Delete in correct order to respect foreign key constraints
+            # 1. Delete executions first
+            self.task_manager.session.query(Execution).delete()
+            
+            # 2. Delete micro-units  
             self.task_manager.session.query(MicroUnit).delete()
+            
+            # 3. Delete tasks
             self.task_manager.session.query(Task).delete()
+            
             self.task_manager.session.commit()
             
             self.send_voice_message(chat_id, "All tasks cleared")
             
         except Exception as e:
             logger.error(f"Error clearing tasks: {e}")
+            # Rollback on error
+            self.task_manager.session.rollback()
             self.send_voice_message(chat_id, "Error clearing tasks")
     
     def handle_tts_command(self, chat_id: int, user_id: int) -> None:
@@ -275,7 +292,7 @@ class TelegramBot:
             text = message.get("text", "")
             
             # Security check: Only allow admin user
-            if int(user_id) != int(ADMIN_USER_ID):
+            if user_id != ADMIN_USER_ID:
                 logger.warning(f"Unauthorized access attempt from user {user_id}")
                 return  # Silently drop the message
             
