@@ -26,7 +26,7 @@ class FishClient:
         
         logger.info(f"TTS Request - Text: '{text[:50]}...' | Bytes: {bytes_used:,} | Cost: ${cost:.6f}")
         
-        file_path = f'media/{text[:5]}_{datetime.now().timestamp()}.wav'
+        file_path = f'media/{text[:5]}_{datetime.now().timestamp()}.mp3'
 
         with open(file_path, 'wb') as f:
             for chunk in self.session.tts(
